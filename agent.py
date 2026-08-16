@@ -1,88 +1,170 @@
-from google import genai
+from groq import Groq
 from dotenv import load_dotenv
 import os
-
-from tools.calculator import calculate
-from tools.file_reader import read_file
+import json
 from tools.file_search import search_file
+from tools.pdf_reader import read_pdf
+
 load_dotenv()
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-MEMORY_FILE = "memory.txt"
+MEMORY_FILE = "memory.json"
 
-
-# Read memory
 def read_memory():
-    if os.path.exists(MEMORY_FILE):
-        with open(MEMORY_FILE, "r") as file:
-            return file.read()
-    return ""
+    default_memory = {
+        "name": "",
+        "city": "",
+        "college": "",
+        "favorite_language": "",
+        "facts": []
+    }
+
+    try:
+        with open(MEMORY_FILE, "r", encoding="utf-8") as file:
+            memory = json.load(file)
+
+        for key, value in default_memory.items():
+            memory.setdefault(key, value)
+
+        return memory
+
+    except:
+        return default_memory
 
 
-# Save memory
-def save_memory(text):
-    with open(MEMORY_FILE, "w") as file:
-        file.write(text)
+def save_memory(memory):
+    with open(MEMORY_FILE, "w", encoding="utf-8") as file:
+        json.dump(memory, file, indent=4)
+
 
 
 memory = read_memory()
 
 print("Nova is ready!")
 
-if memory.strip():
-    print(f"Welcome back! I remember: {memory}")
+if memory["name"]:
+    print(f"Welcome back, {memory['name']}!")
 else:
     print("I don't know anything about you yet.")
 
+def update_memory(question):
+    q = question.lower().strip()
+
+    if q.startswith("my name is "):
+        memory["name"] = question[11:].strip()
+
+    elif q.startswith("i am from "):
+        memory["city"] = question[10:].strip()
+
+    elif q.startswith("i study at "):
+        memory["college"] = question[11:].strip()
+
+    elif q.startswith("my favorite language is ") or q.startswith("my favourite language is "):
+        memory["favorite_language"] = question.split("is", 1)[1].strip()
+
+    elif q.startswith("i am "):
+        name = question[5:].strip()
+        if len(name.split()) <= 3:      # Avoid saving sentences like "I am tired"
+            memory["name"] = name
+
+    elif q.startswith("remember "):
+        memory["facts"].append(question[9:].strip())
+
+    save_memory(memory)
+    save_memory(memory)
+
 while True:
     question = input("\nYou: ")
-
+    update_memory(question)
     # Exit
+
     if question.lower() == "exit":
         print("Nova: Goodbye!")
         break
 
-    # Save name
-    if question.lower().startswith("my name is"):
-        name = question[10:].strip()
-        save_memory(f"Your name is {name}.")
-        memory = read_memory()
-        print(f"Nova: Nice to meet you, {name}! I'll remember that.")
+    if question.lower() == "what is my name?":
+        print(f"Nova: Your name is {memory.get('name','unknown')}.")
         continue
 
-    # Calculator
-    if question.lower().startswith("calculate "):
-        expression = question[10:]
-        print("\nNova:", calculate(expression))
+    if question.lower() == "where am i from?":
+        print(f"Nova: You're from {memory.get('city','an unknown place')}.")
         continue
 
-    # Read file
-    if question.lower().startswith("read "):
-        filename = question[5:]
-        print("\nNova:")
-        print(read_file(filename))
+    if question.lower() in ["what is my favorite language?", "what is my favourite language?"]:
+        print(f"Nova: Your favorite language is {memory.get('favorite_language','unknown')}.")
         continue
 
-    # Find file
-    if question.lower().startswith("find "):
-        keyword = question[5:]
-        print("\nNova:")
-        print(search_file(keyword))
-        continue
+    # PDF Summarizer
+        # PDF Summarizer
+    if question.lower().startswith("summarize "):
+        filename = question[10:].strip()
 
-    # Gemini handles everything else
+        if filename.endswith(".pdf"):
+            pdf_text = read_pdf(filename)
+
+            print("Nova is thinking...")
+
+            response = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are Nova, a helpful assistant."
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Summarize this PDF clearly:\n\n{pdf_text[:3000]}"
+                    }
+                ]
+            )
+
+            print("\nNova:", response.choices[0].message.content)
+
+        else:
+            print("Nova: Please provide a PDF file.")
+
+        continue
+    # Everything else goes to Gemini
+    memory_context = []
+
+    if memory["name"]:
+        memory_context.append(f"Name: {memory['name']}")
+
+    if memory.get("city", ""):
+        memory_context.append(f"City: {memory['city']}")
+
+    if memory["college"]:
+        memory_context.append(f"College: {memory['college']}")
+
+    if memory["favorite_language"]:
+        memory_context.append(f"Favorite Language: {memory['favorite_language']}")
+
     prompt = f"""
 Memory:
-{memory}
+{chr(10).join(memory_context)}
 
 User:
 {question}
 """
+    print("Nova is thinking...")
 
-    response = client.models.generate_content(
-        model="gemini-3.5-flash",
-        contents=prompt
-    )
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are Nova, a helpful personal AI assistant."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        )
 
-    print("\nNova:", response.text)
+        print("\nNova:", response.choices[0].message.content)
+
+    except Exception as e:
+        print(f"\nNova: Error - {e}")
