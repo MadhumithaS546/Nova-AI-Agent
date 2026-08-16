@@ -5,6 +5,11 @@ import streamlit as st
 from groq import Groq
 from dotenv import load_dotenv
 from tools.web_search import web_search
+from tools.router import use_tool, route_query
+from core.router_llm import ai_route
+from agents.manager import handle_local_request
+from agents.chat_agent import chat_reply
+from agents.pdf_agent import pdf_context
 import os
 
 # Load API Key
@@ -90,6 +95,15 @@ try:
 except:
     st.sidebar.write("No memory yet.")
 
+# 🔊 Voice Settings
+st.sidebar.divider()
+st.sidebar.subheader("🔊 Voice Settings")
+
+voice_reply = st.sidebar.toggle(
+    "Speak responses",
+    value=False
+)
+
 
 # Chat History
 if "messages" not in st.session_state:
@@ -116,6 +130,7 @@ if prompt:
 
     with st.chat_message("assistant"):
         with st.spinner("Nova is thinking..."):
+                
 
             # Build the system prompt
             system_prompt = "You are Nova, a helpful personal AI assistant."
@@ -125,27 +140,50 @@ if prompt:
                 system_prompt += f"\n\nThe user uploaded this PDF:\n{pdf_text[:5000]}"
 
             # Use web search when needed
-            live_info = ""
+           
+            route, local_reply = handle_local_request(
+                prompt,
+                memory,
+                pdf_text
+            )
+            if local_reply:
+                st.caption(f"🧭 Agent: {route.title()} Agent")
+                st.markdown(local_reply)
 
-            search_words = [
-                "today",
-                "latest",
-                "news",
-                "weather",
-                "score",
-                "price",
-                "current"
-            ]
+                answer = local_reply
+            else:
+                st.caption("🧭 Agent: Chat Agent")
 
-            if any(word in prompt.lower() for word in search_words):
+                pdf_info = pdf_context(pdf_text)
+
+                if pdf_info:
+                    system_prompt += "\n\n" + pdf_info
+
+                answer = chat_reply(
+                    st.session_state.messages,
+                    system_prompt
+                )
+
+            st.markdown(answer)
+
+            # Web Search
+            if route == "web":
                 with st.spinner("🌐 Searching the web..."):
                     live_info = web_search(prompt)
 
-                system_prompt += (
-                    "\n\nUse these live web search results:\n"
-                    f"{live_info}"
+                system_prompt += f"\n\nUse these live web search results:\n{live_info}"
+
+            # Local Tools
+            elif route == "tool":
+                tool_result = use_tool(prompt)
+
+                st.markdown(tool_result)
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": tool_result}
                 )
 
+                st.stop()
+                st.caption(f"🧭 Route: {route}")
             response = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
@@ -159,9 +197,9 @@ if prompt:
             answer = response.choices[0].message.content
 
             st.markdown(answer)
-            audio_path = speak(answer)
-
-            st.audio(audio_path, format="audio/mp3", autoplay=True)
+            if voice_reply:
+                audio_path = speak(answer)
+                st.audio(audio_path, format="audio/mp3", autoplay=True)
     st.session_state.messages.append(
         {"role": "assistant", "content": answer}
     )

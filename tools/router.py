@@ -53,3 +53,41 @@ def use_tool(question):
         return list_files()
     
     return None
+
+def route_query(prompt, has_pdf=False):
+    text = prompt.lower().strip()
+
+    # Memory questions
+    if "what is my name" in text or "where am i from" in text:
+        return "memory"
+
+    # PDF questions
+    if has_pdf and (
+        "summarize" in text
+        or "document" in text
+        or "pdf" in text
+        or "resume" in text
+    ):
+        return "pdf"
+
+    # Web questions
+    web_words = [
+        "today",
+        "latest",
+        "news",
+        "weather",
+        "score",
+        "price",
+        "current",
+        "this week",
+        "yesterday"
+    ]
+
+    if any(word in text for word in web_words):
+        return "web"
+
+    # Let existing tools handle calculator, files, etc.
+    if use_tool(prompt):
+        return "tool"
+
+    return "chat"
