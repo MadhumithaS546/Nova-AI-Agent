@@ -10,6 +10,14 @@ from core.router_llm import ai_route
 from agents.manager import handle_local_request
 from agents.chat_agent import chat_reply
 from agents.pdf_agent import pdf_context
+from database.chat_history import (
+    init_db,
+    create_conversation,
+    save_message,
+    load_messages,
+    get_conversations,
+    clear_database
+)
 import os
 
 # Load API Key
@@ -22,9 +30,7 @@ st.set_page_config(
     page_icon="🤖",
     layout="wide"
 )
-# Initialize session state
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+init_db()
 
 if "pdf_text" not in st.session_state:
     st.session_state.pdf_text = ""
@@ -53,6 +59,53 @@ if audio and audio.get("bytes"):
         voice_prompt = transcript.text
         st.success(f"You said: {voice_prompt}")
 
+
+# Sidebar - Nova Memory
+st.sidebar.title("🧠 Nova Memory")
+st.sidebar.divider()
+
+if "conversation_id" not in st.session_state:
+    st.session_state.conversation_id = create_conversation()
+
+if st.sidebar.button("➕ New Chat", key="new_chat_button"):
+    st.session_state.conversation_id = create_conversation()
+    st.session_state.messages = []
+    st.rerun()
+
+# Load messages for the selected conversation
+if "messages" not in st.session_state:
+    st.session_state.messages = load_messages(
+        st.session_state.conversation_id
+    )
+st.sidebar.subheader("💬 Conversations")
+
+conversations = get_conversations()
+
+
+st.title("🤖 Nova")
+st.caption("Your Personal AI Assistant")
+
+audio = mic_recorder(
+    start_prompt="🎤 Start Talking",
+    stop_prompt="⏹ Stop",
+    key="main_mic_recorder"
+)
+
+voice_prompt = None
+
+if audio and audio.get("bytes"):
+    with st.spinner("🎤 Transcribing..."):
+        audio_file = io.BytesIO(audio["bytes"])
+        audio_file.name = "voice.wav"
+
+        transcript = client.audio.transcriptions.create(
+            model="whisper-large-v3-turbo",
+            file=audio_file
+        )
+
+        voice_prompt = transcript.text
+        st.success(f"You said: {voice_prompt}")
+
 st.markdown("""
 <style>
 .block-container{
@@ -64,7 +117,8 @@ from pypdf import PdfReader
 
 uploaded_file = st.file_uploader(
     "📄 Upload a PDF",
-    type=["pdf"]
+    type=["pdf"],
+    key="pdf_uploader_main"
 )
 if uploaded_file:
     reader = PdfReader(uploaded_file)
@@ -80,7 +134,25 @@ pdf_text = st.session_state.pdf_text
 
 # Sidebar - Nova Memory
 st.sidebar.title("🧠 Nova Memory")
+st.sidebar.divider()
 
+if "conversation_id" not in st.session_state:
+    st.session_state.conversation_id = create_conversation()
+
+if st.sidebar.button("➕ New Chat"):
+    st.session_state.conversation_id = create_conversation()
+    st.session_state.messages = []
+    st.rerun()
+
+st.sidebar.subheader("💬 Conversations")
+
+conversations = get_conversations()
+
+for cid, title in conversations:
+    if st.sidebar.button(title, key=f"chat_{cid}"):
+        st.session_state.conversation_id = cid
+        st.session_state.messages = load_messages(cid)
+        st.rerun()
 try:
     import json
 
@@ -103,7 +175,16 @@ voice_reply = st.sidebar.toggle(
     "Speak responses",
     value=False
 )
+# Clear only the current chat
+if st.sidebar.button("🗑️ Clear Chat"):
+    st.session_state.messages = []
+    st.rerun()
 
+# Delete all saved chat history from SQLite
+if st.sidebar.button("🗑️ Delete Saved History"):
+    clear_database()
+    st.session_state.messages = []
+    st.rerun()
 
 # Chat History
 if "messages" not in st.session_state:
@@ -124,7 +205,11 @@ if prompt:
     st.session_state.messages.append(
         {"role": "user", "content": prompt}
     )
-
+    save_message(
+        st.session_state.conversation_id,
+        "user",
+        prompt
+    )
     with st.chat_message("user"):
         st.markdown(prompt)
 
@@ -202,4 +287,9 @@ if prompt:
                 st.audio(audio_path, format="audio/mp3", autoplay=True)
     st.session_state.messages.append(
         {"role": "assistant", "content": answer}
+    )
+    save_message(
+        st.session_state.conversation_id,
+        "assistant",
+        answer
     )

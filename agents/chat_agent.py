@@ -19,3 +19,22 @@ def chat_reply(messages, system_prompt):
     )
 
     return response.choices[0].message.content
+def generate_title(first_message):
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Create a very short chat title (3-5 words). "
+                    "Return only the title."
+                )
+            },
+            {
+                "role": "user",
+                "content": first_message
+            }
+        ]
+    )
+
+    return response.choices[0].message.content.strip()
